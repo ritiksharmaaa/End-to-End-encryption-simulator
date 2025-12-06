@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E2EE Protocol Simulator (Signal/X3DH)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', monospace; background-color: #0f172a; color: #e2e8f0; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+        /* Animations */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        
+        @keyframes wipeEffect {
+            0% { background-color: rgba(16, 185, 129, 0.2); color: #34d399; }
+            100% { background-color: transparent; color: #64748b; }
+        }
+        .wiped-key { animation: wipeEffect 1s ease-out forwards; text-decoration: line-through; }
+
+        .dh-step { border-left: 2px solid #334155; padding-left: 8px; margin-bottom: 4px; opacity: 0.5; transition: all 0.3s; }
+        .dh-step.active { border-left-color: #10b981; opacity: 1; background: rgba(16, 185, 129, 0.05); }
+
+        /* Log Styling */
+        .log-entry { @apply border-l-2 pl-2 mb-1 text-xs font-mono opacity-90 py-0.5; }
+        .log-info { @apply border-blue-500 text-blue-200; }
+        .log-success { @apply border-green-500 text-green-200; }
+        .log-warn { @apply border-yellow-500 text-yellow-200; }
+        .log-error { @apply border-red-500 text-red-200; }
+        
+        .vault-item { @apply bg-slate-800 p-2 rounded border border-slate-700 text-xs font-mono mb-1 flex justify-between items-center; }
+        .db-item { @apply bg-slate-900 p-2 rounded border border-slate-700 text-xs font-mono mb-1 text-blue-300; }
+
+        /* Modal */
+        #data-modal { backdrop-filter: blur(4px); }
+        .json-key { color: #93c5fd; }
+        .json-string { color: #86efac; }
+        .json-number { color: #fca5a5; }
+        
+        /* --- NEW MATH STYLING --- */
+        .math-block { 
+            @apply bg-slate-950 border-b border-slate-800 p-6 hidden transition-all;
+            box-shadow: inset 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        }
+        
+        /* Cards */
+        .math-card { 
+            @apply bg-slate-900/80 border border-slate-800 rounded-lg p-3 flex flex-col items-center gap-2 relative overflow-hidden transition-all duration-300; 
+        }
+        .math-card:hover { @apply border-slate-600 bg-slate-800 transform -translate-y-0.5 shadow-lg; }
+        
+        /* Top Border Accents */
+        .math-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; opacity: 0.8; }
+        .math-card.emerald::before { background: #10b981; box-shadow: 0 0 10px #10b981; }
+        .math-card.blue::before { background: #3b82f6; box-shadow: 0 0 10px #3b82f6; }
+        .math-card.yellow::before { background: #eab308; box-shadow: 0 0 10px #eab308; }
+
+        /* Labels */
+        .math-label { @apply text-[10px] font-bold tracking-wider mb-1; }
+        .text-emerald-glow { color: #34d399; text-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
+        .text-blue-glow { color: #60a5fa; text-shadow: 0 0 8px rgba(59, 130, 246, 0.4); }
+        .text-yellow-glow { color: #facc15; text-shadow: 0 0 8px rgba(234, 179, 8, 0.4); }
+
+        /* Key Pills */
+        .key-pill { 
+            @apply flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono border cursor-help transition-all;
+        }
+        .key-pill:hover { @apply brightness-125; }
+        
+        .pill-priv { @apply bg-red-950/40 text-red-300 border-red-900/50; }
+        .pill-pub { @apply bg-blue-950/40 text-blue-300 border-blue-900/50; }
+        .pill-eph { @apply bg-purple-950/40 text-purple-300 border-purple-900/50; }
+        
+        .op-plus { 
+            @apply text-[9px] text-slate-500 font-bold bg-slate-950 w-5 h-5 rounded-full flex items-center justify-center border border-slate-800 -my-1 z-10; 
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+
+    <!-- MODAL FOR INSPECTION -->
+    <div id="data-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/70">
+        <div class="bg-slate-900 border border-slate-700 rounded-lg w-3/4 max-w-2xl shadow-2xl flex flex-col max-h-[80vh]">
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-lg">
+                <h3 class="font-bold text-white text-sm uppercase tracking-wider" id="modal-title">Data Inspector</h3>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-4 overflow-y-auto font-mono text-xs text-slate-300 bg-slate-950">
+                <pre id="modal-content" class="whitespace-pre-wrap break-all"></pre>
+            </div>
+            <div class="p-2 border-t border-slate-700 bg-slate-900 text-center text-[10px] text-slate-500">
+                Raw JSON representation of stored object
+            </div>
+        </div>
+    </div>
+
+    <!-- TOP SECTION: PUBLIC SERVER DATABASE -->
+    <section class="h-48 shrink-0 flex flex-col border-b border-slate-700 bg-slate-900/50">
+        <div class="px-4 py-2 bg-slate-900 border-b border-slate-800 flex justify-between items-center shrink-0">
+            <h2 class="text-blue-400 font-bold uppercase tracking-wider text-sm flex items-center gap-2">
+                <span class="p-1 bg-blue-500/10 rounded"><i class="fas fa-server"></i></span>
+                Public Server (The "Cloud")
+            </h2>
+            <span class="text-xs text-slate-500 border border-slate-700 px-2 py-0.5 rounded">Untrusted Storage</span>
+        </div>
+        
+        <div class="flex-1 flex overflow-hidden">
+            <!-- Public Directory -->
+            <div class="w-1/2 p-4 border-r border-slate-800 overflow-y-auto min-h-0">
+                <h3 class="text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider sticky top-0 bg-slate-900/90 py-1 backdrop-blur">Public Key Directory</h3>
+                <div id="server-keys-container" class="grid grid-cols-2 gap-3 pb-2">
+                    <div class="text-slate-600 italic text-sm p-2">Waiting for uploads...</div>
+                </div>
+            </div>
+            
+            <!-- Message Relay -->
+            <div class="w-1/2 p-4 overflow-y-auto min-h-0">
+                <h3 class="text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider sticky top-0 bg-slate-900/90 py-1 backdrop-blur">Encrypted Message Queue</h3>
+                <div id="server-messages-container" class="space-y-2 pb-2">
+                    <!-- Messages appear here -->
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- MIDDLE CONTROL BAR & LOGS -->
+    <section class="h-64 shrink-0 bg-slate-950 border-b border-slate-700 flex relative z-20 shadow-xl">
+        <!-- X3DH Lab Controls -->
+        <div class="w-5/12 p-4 border-r border-slate-800 flex flex-col relative overflow-hidden group shrink-0">
+            <div class="absolute inset-0 bg-gradient-to-br from-emerald-900/10 to-transparent pointer-events-none"></div>
+            
+            <!-- Header with Toggle -->
+            <div class="flex justify-between items-center mb-2 z-10">
+                <h2 class="text-emerald-400 font-bold text-sm flex items-center gap-2">
+                    <span class="p-1 bg-emerald-500/10 rounded"><i class="fas fa-flask"></i></span>
+                    X3DH Lab
+                </h2>
+                
+                <!-- INITIATOR TOGGLE -->
+                <div class="flex bg-slate-800 rounded p-0.5 border border-slate-700 shadow-sm">
+                    <button onclick="setInitiator('alice')" id="toggle-alice" class="px-3 py-1 text-[10px] font-bold rounded bg-emerald-600 text-white shadow transition-all">A → B</button>
+                    <button onclick="setInitiator('bob')" id="toggle-bob" class="px-3 py-1 text-[10px] font-bold rounded text-slate-400 hover:text-white transition-all">B → A</button>
+                </div>
+            </div>
+
+            <!-- Phase Label -->
+            <div class="mb-3 z-10 flex items-center gap-2 text-[10px]">
+                <span class="text-slate-500 uppercase tracking-wide">Status</span>
+                <div class="h-px bg-slate-800 flex-1"></div>
+                <span id="lab-phase" class="bg-slate-800 px-2 py-0.5 rounded text-slate-400 border border-slate-700 font-mono">IDLE</span>
+            </div>
+
+            <!-- Visualization Area -->
+            <div id="x3dh-visualizer" class="flex-1 bg-slate-900/50 rounded-lg border border-slate-800 p-3 text-[10px] font-mono overflow-y-auto mb-3 z-10 space-y-1 shadow-inner">
+                <div class="flex flex-col items-center justify-center h-full text-slate-600 gap-2">
+                    <i class="fas fa-key text-xl opacity-20"></i>
+                    <span>1. Generate Keys (Vaults)</span>
+                    <span>2. Start Handshake (Here)</span>
+                </div>
+            </div>
+
+            <!-- Manual Controls -->
+            <div class="flex gap-2 z-10">
+                <button id="btn-x3dh-step" onclick="advanceX3DH()" disabled class="flex-1 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 disabled:cursor-not-allowed text-white px-3 py-2.5 rounded-lg text-xs font-bold transition-all shadow-lg whitespace-nowrap flex items-center justify-center gap-2 border border-emerald-600/50">
+                    <span>Start Handshake</span> <i class="fas fa-chevron-right text-[10px]"></i>
+                </button>
+                <button onclick="resetX3DH()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2.5 rounded-lg text-xs font-bold border border-slate-700 transition-colors" title="Reset Lab">
+                    <i class="fas fa-undo"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- System Log -->
+        <div class="w-7/12 p-0 bg-slate-950 font-mono text-xs overflow-hidden flex flex-col relative">
+            <div class="bg-slate-900 border-b border-slate-800 px-3 py-2 text-slate-400 font-bold text-[10px] uppercase tracking-wider flex justify-between items-center shadow-sm z-10">
+                <span><i class="fas fa-terminal mr-2"></i>System Log</span>
+                <button class="text-slate-600 hover:text-white transition-colors" onclick="document.getElementById('system-log').innerHTML=''" title="Clear Log"><i class="fas fa-trash-alt"></i></button>
+            </div>
+            <div id="system-log" class="flex-1 overflow-y-auto p-3 flex flex-col-reverse space-y-1 space-y-reverse bg-black/20">
+                <!-- Logs go here -->
+            </div>
+        </div>
+    </section>
+
+    <!-- NEW SECTION: CRYPTO INTERNALS -->
+    <section class="shrink-0 flex flex-col md:flex-row border-b border-slate-700 bg-slate-950 relative z-10">
+        
+        <!-- Alice's Internal State -->
+        <div class="w-full md:w-1/2 border-r border-slate-700 flex flex-col">
+            <div class="bg-slate-900/80 p-1.5 px-3 border-b border-slate-800 text-[9px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-indigo-500"></span> Alice's Device Internals
+            </div>
+            
+            <!-- Ratchet Engine Block -->
+            <div class="p-3 border-b border-slate-800 flex items-center gap-3">
+                <div class="text-[9px] font-bold text-slate-500 uppercase w-10 text-right leading-tight">Ratchet<br>Engine</div>
+                <div class="flex-1 bg-slate-900 rounded-md border border-slate-700/50 flex justify-between items-center px-3 py-1.5 text-[10px] font-mono shadow-inner">
+                    <div class="text-center">
+                        <div class="text-slate-600 text-[8px] uppercase mb-0.5">Root Key</div>
+                        <div id="alice-root-key" class="text-yellow-500 font-bold tracking-tight">...</div>
+                    </div>
+                    <div class="text-slate-700"><i class="fas fa-arrow-right text-[8px]"></i></div>
+                    <div class="text-center">
+                        <div class="text-slate-500 text-[8px] uppercase mb-0.5">Chain Key</div>
+                        <div id="alice-chain-key" class="text-blue-400 font-bold tracking-tight">...</div>
+                    </div>
+                    <div class="text-slate-700"><i class="fas fa-arrow-right text-[8px]"></i></div>
+                    <div class="text-center">
+                        <div class="text-slate-600 text-[8px] uppercase mb-0.5">Msg Key</div>
+                        <div id="alice-msg-key" class="text-slate-600 italic">Inactive</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alice X3DH Math -->
+            <div id="alice-x3dh-math" class="math-block">
+                <div class="flex justify-between items-center mb-6"> 
+                    <span id="alice-math-title" class="font-bold text-slate-500 text-[10px] tracking-wide">CALCULATION</span>
+                </div>
+                <!-- Enhanced Grid Layout with larger gap -->
+                <div id="alice-math-content" class="grid grid-cols-3 gap-6"> 
+                    <!-- Cards injected via JS -->
+                </div>
+                <div class="mt-6 pt-2 border-t border-slate-800 text-center" id="alice-math-footer"> 
+                    <!-- Footer injected via JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Bob's Internal State -->
+        <div class="w-full md:w-1/2 flex flex-col">
+            <div class="bg-slate-900/80 p-1.5 px-3 border-b border-slate-800 text-[9px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-purple-500"></span> Bob's Device Internals
+            </div>
+            
+            <!-- Ratchet Engine Block -->
+            <div class="p-3 border-b border-slate-800 flex items-center gap-3">
+                <div class="text-[9px] font-bold text-slate-500 uppercase w-10 text-right leading-tight">Ratchet<br>Engine</div>
+                <div class="flex-1 bg-slate-900 rounded-md border border-slate-700/50 flex justify-between items-center px-3 py-1.5 text-[10px] font-mono shadow-inner">
+                    <div class="text-center">
+                        <div class="text-slate-600 text-[8px] uppercase mb-0.5">Root Key</div>
+                        <div id="bob-root-key" class="text-yellow-500 font-bold tracking-tight">...</div>
+                    </div>
+                    <div class="text-slate-700"><i class="fas fa-arrow-right text-[8px]"></i></div>
+                    <div class="text-center">
+                        <div class="text-slate-600 text-[8px] uppercase mb-0.5">Chain Key</div>
+                        <div id="bob-chain-key" class="text-blue-400 font-bold tracking-tight">...</div>
+                    </div>
+                    <div class="text-slate-700"><i class="fas fa-arrow-right text-[8px]"></i></div>
+                    <div class="text-center">
+                        <div class="text-slate-600 text-[8px] uppercase mb-0.5">Msg Key</div>
+                        <div id="bob-msg-key" class="text-slate-600 italic">Inactive</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bob X3DH Math -->
+            <div id="bob-x3dh-math" class="math-block">
+                <div class="flex justify-between items-center mb-6"> 
+                    <span id="bob-math-title" class="font-bold text-slate-500 text-[10px] tracking-wide">CALCULATION</span>
+                </div>
+                <div id="bob-math-content" class="grid grid-cols-3 gap-6"> 
+                    <!-- Cards injected via JS -->
+                </div>
+                <div class="mt-6 pt-2 border-t border-slate-800 text-center" id="bob-math-footer"> 
+                    <!-- Footer injected via JS -->
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- BOTTOM SECTION: CLIENTS (Fluid Flow) -->
+    <section class="flex-1 flex flex-col md:flex-row min-h-[400px]">
+        
+        <!-- ALICE (CLIENT A) -->
+        <div class="w-full md:w-1/2 border-r border-slate-700 flex flex-col relative bg-slate-900 h-full">
+            <!-- Header -->
+            <div class="bg-indigo-950/30 p-2 border-b border-indigo-900/30 flex justify-between items-center shrink-0 backdrop-blur-sm">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-sm shadow-lg shadow-indigo-500/20 text-white border border-indigo-400/20">A</div>
+                    <div>
+                        <h2 class="font-bold text-indigo-200 text-sm">Alice</h2>
+                        <p class="text-[10px] text-indigo-400/80 font-mono">ID: alice_01</p>
+                    </div>
+                </div>
+                <div class="text-[9px] font-bold bg-slate-800/80 px-2 py-1 rounded border border-slate-700/50 text-slate-400 uppercase tracking-wider" id="alice-status">Offline</div>
+            </div>
+
+            <!-- Chat Area (Fluid) -->
+            <div class="flex-1 p-4 overflow-y-auto bg-slate-900/30 flex flex-col space-y-3 min-h-0 scroll-smooth relative" id="alice-chat-window">
+                <div class="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/10 via-slate-900/0 to-slate-900/0"></div>
+                <div class="text-center text-slate-600 text-xs mt-10 bg-slate-800/50 p-4 rounded-lg mx-auto max-w-[200px] border border-slate-700/50 backdrop-blur-sm z-10">
+                    <i class="fas fa-lock mb-2 opacity-50"></i><br>
+                    Messages are end-to-end encrypted.
+                </div>
+            </div>
+
+            <!-- Input Area (Fixed) -->
+            <div class="p-3 bg-slate-800/80 border-t border-slate-700 flex gap-2 shrink-0 shadow-lg z-10 backdrop-blur">
+                <input type="text" id="alice-input" placeholder="Handshake required..." disabled class="flex-1 bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 focus:outline-none disabled:opacity-50 text-white transition-all placeholder-slate-600">
+                <button id="alice-send" onclick="sendMessage('alice')" disabled class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-1 rounded-md text-xs font-bold transition-all active:scale-95 shadow-lg shadow-indigo-500/20">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+
+            <!-- PRIVATE VAULT A (Fixed Height) -->
+            <div class="h-32 shrink-0 bg-slate-950 border-t-4 border-indigo-900 p-2 overflow-y-auto">
+                <div class="flex justify-between items-center mb-2 sticky top-0 bg-slate-950 z-10 pb-1 border-b border-slate-800">
+                    <h3 class="text-[10px] font-bold text-red-400 uppercase tracking-wide flex items-center gap-1.5"><i class="fas fa-shield-alt"></i> Alice's Vault</h3>
+                    <div class="flex gap-2">
+                        <button onclick="inspectVault('alice')" class="text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2 py-0.5 rounded transition-colors text-blue-300" title="Inspect Raw Data">
+                            <i class="fas fa-search"></i>
+                        </button>
+                        <button id="btn-gen-alice" onclick="generateKeys('alice')" class="text-[10px] bg-indigo-900/30 hover:bg-indigo-800/50 border border-indigo-700/50 text-indigo-300 px-2 py-0.5 rounded transition-colors whitespace-nowrap font-bold">
+                            Generate Keys
+                        </button>
+                    </div>
+                </div>
+                <div id="alice-vault" class="space-y-1 pt-1">
+                    <div class="text-slate-600 text-[10px] italic p-2 text-center">Empty Vault</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BOB (CLIENT B) -->
+        <div class="w-full md:w-1/2 flex flex-col relative bg-slate-900 h-full border-t md:border-t-0 border-slate-700">
+            <!-- Header -->
+            <div class="bg-purple-950/30 p-2 border-b border-purple-900/30 flex justify-between items-center shrink-0 backdrop-blur-sm">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-purple-600 flex items-center justify-center font-bold text-sm shadow-lg shadow-purple-500/20 text-white border border-purple-400/20">B</div>
+                    <div>
+                        <h2 class="font-bold text-purple-200 text-sm">Bob</h2>
+                        <p class="text-[10px] text-purple-400/80 font-mono">ID: bob_99</p>
+                    </div>
+                </div>
+                <div class="text-[9px] font-bold bg-slate-800/80 px-2 py-1 rounded border border-slate-700/50 text-slate-400 uppercase tracking-wider" id="bob-status">Offline</div>
+            </div>
+
+            <!-- Chat Area -->
+            <div class="flex-1 p-4 overflow-y-auto bg-slate-900/30 flex flex-col space-y-3 min-h-0 scroll-smooth relative" id="bob-chat-window">
+                <div class="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-900/10 via-slate-900/0 to-slate-900/0"></div>
+                <div class="text-center text-slate-600 text-xs mt-10 bg-slate-800/50 p-4 rounded-lg mx-auto max-w-[200px] border border-slate-700/50 backdrop-blur-sm z-10">
+                    <i class="fas fa-lock mb-2 opacity-50"></i><br>
+                    Messages are end-to-end encrypted.
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-3 bg-slate-800/80 border-t border-slate-700 flex gap-2 shrink-0 shadow-lg z-10 backdrop-blur">
+                <input type="text" id="bob-input" placeholder="Handshake required..." disabled class="flex-1 bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-xs focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50 focus:outline-none disabled:opacity-50 text-white transition-all placeholder-slate-600">
+                <button id="bob-send" onclick="sendMessage('bob')" disabled class="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-1 rounded-md text-xs font-bold transition-all active:scale-95 shadow-lg shadow-purple-500/20">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+
+            <!-- PRIVATE VAULT B -->
+            <div class="h-32 shrink-0 bg-slate-950 border-t-4 border-purple-900 p-2 overflow-y-auto">
+                <div class="flex justify-between items-center mb-2 sticky top-0 bg-slate-950 z-10 pb-1 border-b border-slate-800">
+                    <h3 class="text-[10px] font-bold text-red-400 uppercase tracking-wide flex items-center gap-1.5"><i class="fas fa-shield-alt"></i> Bob's Vault</h3>
+                    <div class="flex gap-2">
+                        <button onclick="inspectVault('bob')" class="text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2 py-0.5 rounded transition-colors text-blue-300" title="Inspect Raw Data">
+                            <i class="fas fa-search"></i>
+                        </button>
+                        <button id="btn-gen-bob" onclick="generateKeys('bob')" class="text-[10px] bg-purple-900/30 hover:bg-purple-800/50 border border-purple-700/50 text-purple-300 px-2 py-0.5 rounded transition-colors whitespace-nowrap font-bold">
+                            Generate Keys
+                        </button>
+                    </div>
+                </div>
+                <div id="bob-vault" class="space-y-1 pt-1">
+                    <div class="text-slate-600 text-[10px] italic p-2 text-center">Empty Vault</div>
+                </div>
+            </div>
+        </div>
+
+    </section>
+
+    <!-- LOGIC -->
+    <script>
+        // --- UTILITIES ---
+        const generateHex = (len) => [...Array(len)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+        const generateKey = (type) => `${type}_${generateHex(16)}`;
+        const kdf = (input) => `KDF_${generateHex(8)}`;
+        
+        // --- STATE ---
+        const DB = {
+            users: {},
+            messages: []
+        };
+
+        const Clients = {
+            alice: { vault: null, session: null, rootKey: null, chainKey: null, ephPub: null, ephPriv: null, peerOTKId: null },
+            bob: { vault: null, session: null, rootKey: null, chainKey: null, ephPub: null, ephPriv: null, peerOTKId: null }
+        };
+
+        let x3dhStep = 0; 
+        let pendingSharedSecret = null;
+        let currentInitiator = 'alice';
+
+        // --- LOGGER ---
+        function log(msg, type = 'info') {
+            const el = document.getElementById('system-log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type} fade-in`;
+            const time = new Date().toLocaleTimeString().split(' ')[0];
+            entry.innerHTML = `<span class="text-slate-500 mr-2 font-mono text-[9px] opacity-60">${time}</span>${msg}`;
+            el.prepend(entry);
+        }
+
+        // --- MODAL LOGIC ---
+        function showModal(title, obj) {
+            const modal = document.getElementById('data-modal');
+            const titleEl = document.getElementById('modal-title');
+            const contentEl = document.getElementById('modal-content');
+            
+            titleEl.textContent = title;
+            // Pretty print JSON
+            contentEl.innerHTML = JSON.stringify(obj, null, 2)
+                .replace(/"([^"]+)":/g, '<span class="json-key">"$1":</span>')
+                .replace(/"([^"]+)"/g, '<span class="json-string">"$1"</span>');
+            
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('data-modal').classList.add('hidden');
+        }
+
+        function inspectVault(user) {
+            if (!Clients[user].vault) {
+                alert("Vault is empty! Generate keys first.");
+                return;
+            }
+            showModal(`${user.toUpperCase()}'s Private Vault (DEVICE STORAGE)`, Clients[user].vault);
+        }
+
+        function inspectServerBundle(user) {
+            if (!DB.users[user]) {
+                alert("No bundle found on server for this user.");
+                return;
+            }
+            showModal(`${user.toUpperCase()}'s Public Bundle (SERVER STORAGE)`, DB.users[user]);
+        }
+
+        // --- STEP 1: KEY GENERATION ---
+        function generateKeys(user) {
+            const btn = document.getElementById(`btn-gen-${user}`);
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-check"></i> Done`;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            log(`Generating keys for <b>${user.toUpperCase()}</b>...`, 'info');
+
+            // Realistic-ish Data Structure
+            const identityKey = { 
+                privateKey: generateHex(64), 
+                publicKey: `05${generateHex(62)}` // 05 prefix common for uncompressed keys
+            };
+            const signedPreKey = { 
+                privateKey: generateHex(64), 
+                publicKey: `05${generateHex(62)}`, 
+                signature: generateHex(128),
+                keyId: Math.floor(Math.random() * 10000)
+            };
+            const oneTimeKey = { 
+                privateKey: generateHex(64), 
+                publicKey: `05${generateHex(62)}`,
+                keyId: Math.floor(Math.random() * 10000)
+            };
+
+            // 2. Store in Private Vault
+            Clients[user].vault = { identityKey, signedPreKey, oneTimeKey };
+            renderVault(user);
+            
+            // 3. Upload Public parts to Server
+            setTimeout(() => {
+                uploadKeysToServer(user, identityKey.publicKey, signedPreKey, oneTimeKey);
+            }, 600);
+        }
+
+        function renderVault(user) {
+            const container = document.getElementById(`${user}-vault`);
+            const v = Clients[user].vault;
+            
+            container.innerHTML = `
+                <div class="vault-item">
+                    <span class="text-red-300">Identity (Priv)</span>
+                    <span class="opacity-50 truncate w-16 text-[8px] font-mono tracking-tighter">******</span>
+                </div>
+                <div class="vault-item">
+                    <span class="text-red-300">PreKey (Priv)</span>
+                    <span class="opacity-50 truncate w-16 text-[8px] font-mono tracking-tighter">******</span>
+                </div>
+                <div class="vault-item" id="vault-otk-${user}">
+                    <span class="text-red-300">One-Time (Priv)</span>
+                    <span class="opacity-50 truncate w-16 text-[8px] font-mono tracking-tighter">******</span>
+                </div>
+            `;
+        }
+
+        function uploadKeysToServer(user, ikPub, spk, otk) {
+            log(`<b>${user.toUpperCase()}</b> uploaded public bundle to Server.`, 'success');
+            
+            // Construct Public Bundle (No Private Keys!)
+            DB.users[user] = { 
+                identityKey: ikPub, 
+                signedPreKey: {
+                    keyId: spk.keyId,
+                    publicKey: spk.publicKey,
+                    signature: spk.signature
+                },
+                oneTimePreKey: {
+                    keyId: otk.keyId,
+                    publicKey: otk.publicKey
+                }
+            };
+
+            // Server UI
+            const serverContainer = document.getElementById('server-keys-container');
+            if(serverContainer.children[0].classList.contains('italic')) serverContainer.innerHTML = '';
+
+            const card = document.createElement('div');
+            card.id = `server-card-${user}`;
+            card.className = "bg-slate-800 p-2 rounded border border-blue-900/30 relative overflow-hidden fade-in mb-2 shadow-md";
+            card.innerHTML = `
+                <div class="flex justify-between items-start mb-1.5 pb-1 border-b border-slate-700/50">
+                    <div class="bg-blue-950/50 text-[9px] px-1.5 py-0.5 text-blue-200 border border-blue-800/30 font-bold rounded flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 bg-blue-400 rounded-full"></span> ${user.toUpperCase()}
+                    </div>
+                    <button onclick="inspectServerBundle('${user}')" class="text-blue-400/50 hover:text-blue-300 text-[10px] transition-colors"><i class="fas fa-search"></i></button>
+                </div>
+                <div class="grid gap-1 mt-1">
+                    <div class="flex justify-between items-center">
+                        <span class="text-[8px] text-slate-500 uppercase font-bold">ID Key</span>
+                        <span class="text-blue-300 font-mono text-[9px] bg-slate-900 px-1 rounded truncate w-20">${ikPub.substr(0,12)}...</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-[8px] text-slate-500 uppercase font-bold">PreKey ${spk.keyId}</span>
+                        <span class="text-emerald-300 font-mono text-[9px] bg-slate-900 px-1 rounded truncate w-20">${spk.publicKey.substr(0,12)}...</span>
+                    </div>
+                    <div class="border-t border-slate-700/50 mt-1 pt-1 flex justify-between items-center">
+                        <div class="text-[8px] text-slate-500 uppercase font-bold flex gap-1">
+                            <span>OTK ${otk.keyId}</span>
+                            <span class="text-red-400 hidden font-bold" id="server-otk-deleted-${user}">DELETED</span>
+                        </div>
+                        <span class="text-emerald-300 font-mono text-[9px] bg-slate-900 px-1 rounded truncate w-20" id="server-otk-${user}">${otk.publicKey.substr(0,12)}...</span>
+                    </div>
+                </div>
+            `;
+            serverContainer.appendChild(card);
+
+            document.getElementById(`${user}-status`).innerText = "Online";
+            document.getElementById(`${user}-status`).classList.remove("text-slate-400", "bg-slate-800/80");
+            document.getElementById(`${user}-status`).classList.add("text-emerald-300", "bg-emerald-950/50", "border-emerald-800/50");
+
+            checkHandshakeReady();
+        }
+
+        function checkHandshakeReady() {
+            if (DB.users.alice && DB.users.bob) {
+                const btn = document.getElementById('btn-x3dh-step');
+                btn.disabled = false;
+                updateInitiatorUI();
+                log("Server has public keys for Alice & Bob. Ready to start Handshake.", 'info');
+            }
+        }
+
+        function deleteOTK(user) {
+            if(DB.users[user]) DB.users[user].oneTimePreKey = null; // Delete from Server DB
+            
+            const otkEl = document.getElementById(`server-otk-${user}`);
+            const badge = document.getElementById(`server-otk-deleted-${user}`);
+            if(otkEl) {
+                otkEl.classList.add('wiped-key');
+                setTimeout(() => {
+                    otkEl.innerText = "[EMPTY]";
+                    badge.style.display = 'block';
+                }, 1000);
+            }
+
+            const vaultItem = document.getElementById(`vault-otk-${user}`);
+            if(vaultItem) vaultItem.classList.add('opacity-50');
+
+            log(`Server: <b>${user.toUpperCase()}'s One-Time Key</b> has been deleted to prevent replay attacks.`, 'warn');
+        }
+
+        // --- HANDSHAKE CONTROLLER ---
+        function setInitiator(user) {
+            if (x3dhStep > 0) {
+                if(confirm("Reset current session to switch initiator?")) {
+                    resetX3DH();
+                } else {
+                    return;
+                }
+            }
+            currentInitiator = user;
+            updateInitiatorUI();
+        }
+
+        function updateInitiatorUI() {
+            const aliceBtn = document.getElementById('toggle-alice');
+            const bobBtn = document.getElementById('toggle-bob');
+            const mainBtn = document.getElementById('btn-x3dh-step');
+            const responder = currentInitiator === 'alice' ? 'Bob' : 'Alice';
+
+            if (currentInitiator === 'alice') {
+                aliceBtn.className = "px-3 py-1 text-[9px] font-bold rounded bg-emerald-600 text-white shadow transition-all";
+                bobBtn.className = "px-3 py-1 text-[9px] font-bold rounded text-slate-400 hover:text-white transition-all";
+            } else {
+                bobBtn.className = "px-3 py-1 text-[9px] font-bold rounded bg-purple-600 text-white shadow transition-all";
+                aliceBtn.className = "px-3 py-1 text-[9px] font-bold rounded text-slate-400 hover:text-white transition-all";
+            }
+
+            if (mainBtn && !mainBtn.disabled) {
+                mainBtn.innerHTML = `<span>1. Fetch ${responder}'s Keys</span> <i class="fas fa-download"></i>`;
+            }
+        }
+
+        // --- STEP 2: X3DH LAB ---
+        function advanceX3DH() {
+            const visualizer = document.getElementById('x3dh-visualizer');
+            const phaseLabel = document.getElementById('lab-phase');
+            const btn = document.getElementById('btn-x3dh-step');
+            
+            const initiator = currentInitiator;
+            const responder = initiator === 'alice' ? 'bob' : 'alice';
+            const initName = initiator.charAt(0).toUpperCase() + initiator.slice(1);
+            const respName = responder.charAt(0).toUpperCase() + responder.slice(1);
+
+            if (x3dhStep === 0) {
+                // STEP 1: FETCH
+                x3dhStep = 1;
+                visualizer.innerHTML = ''; 
+                
+                // SAVE PEER OTK ID before deletion
+                const otkObj = Clients[responder].vault.oneTimeKey;
+                if(otkObj) Clients[initiator].peerOTKId = otkObj.keyId;
+
+                deleteOTK(responder);
+
+                // Safe access for display
+                const otkText = otkObj ? otkObj.publicKey.substr(0,4)+"..." : "UNKNOWN";
+
+                const entry = document.createElement('div');
+                entry.className = "dh-step active";
+                entry.innerHTML = `
+                    <div class="font-bold text-emerald-400 mb-1">STEP 1: ${initName} fetches ${respName}'s Bundle</div>
+                    <div class="text-slate-300">Identity: <span class="text-blue-300">${DB.users[responder].identityKey.substr(0,4)}...</span></div>
+                    <div class="text-slate-300">PreKey: <span class="text-emerald-300">${DB.users[responder].signedPreKey.publicKey.substr(0,4)}...</span></div>
+                    <div class="text-slate-300">OTK: <span class="text-emerald-300 text-decoration-line-through">${otkText}</span> (Consumed)</div>
+                `;
+                visualizer.appendChild(entry);
+                
+                phaseLabel.innerText = "Phase: Keys Acquired";
+                phaseLabel.classList.replace('text-slate-400', 'text-blue-400');
+                
+                btn.innerHTML = `<span>2. Calculate Diffie-Hellman</span> <i class="fas fa-calculator"></i>`;
+                log(`${initName} downloaded ${respName}'s key bundle. Server deleted ${respName}'s OTK.`, 'info');
+                
+            } else if (x3dhStep === 1) {
+                // STEP 2: CALCULATE
+                x3dhStep = 2;
+                visualizer.lastElementChild.classList.remove('active');
+
+                // Simulate key generation
+                const ephPriv = generateHex(64);
+                const ephPub = `05${generateHex(62)}`;
+                Clients[initiator].ephPriv = ephPriv;
+                Clients[initiator].ephPub = ephPub;
+
+                // Grab real key fragments for UI
+                const initPrivIK = Clients[initiator].vault.identityKey.privateKey.substr(0,4)+"..";
+                const respPubSPK = DB.users[responder].signedPreKey.publicKey.substr(0,4)+"..";
+                
+                const initPrivEph = ephPriv.substr(0,4)+"..";
+                const respPubIK = DB.users[responder].identityKey.substr(0,4)+"..";
+                
+                const respPubOTK = Clients[responder].vault.oneTimeKey.publicKey.substr(0,4)+".."; 
+
+                // --- SHOW MATH IN INITIATOR'S PANEL ---
+                const mathEl = document.getElementById(`${initiator}-x3dh-math`);
+                const contentEl = document.getElementById(`${initiator}-math-content`);
+                const titleEl = document.getElementById(`${initiator}-math-title`);
+                const footerEl = document.getElementById(`${initiator}-math-footer`);
+
+                // Dynamic Header for Initiator
+                titleEl.className = "font-bold text-yellow-500 text-[10px] tracking-wide";
+                titleEl.innerHTML = '<i class="fas fa-lock-open mr-1"></i> SENDER CALCULATION (MIXING)';
+                
+                mathEl.classList.remove('hidden');
+                mathEl.classList.add('block', 'fade-in');
+                
+                contentEl.innerHTML = `
+                    <div class="math-card emerald">
+                        <div class="math-header text-emerald-glow">DH1</div>
+                        <div class="flex flex-col gap-1.5 w-full">
+                            <span class="key-pill pill-priv" title="My Private Identity Key">🔑 Priv IK <span class="ml-auto opacity-50">${initPrivIK}</span></span>
+                            <span class="op-plus mx-auto">+</span>
+                            <span class="key-pill pill-pub" title="Their Public Signed PreKey">🌍 Pub SPK <span class="ml-auto opacity-50">${respPubSPK}</span></span>
+                        </div>
+                    </div>
+                    <div class="math-card blue">
+                        <div class="math-header text-blue-glow">DH2</div>
+                        <div class="flex flex-col gap-1.5 w-full">
+                            <span class="key-pill pill-eph" title="My Ephemeral Private Key">⚡ Priv Eph <span class="ml-auto opacity-50">${initPrivEph}</span></span>
+                            <span class="op-plus mx-auto">+</span>
+                            <span class="key-pill pill-pub" title="Their Public Identity Key">🌍 Pub IK <span class="ml-auto opacity-50">${respPubIK}</span></span>
+                        </div>
+                    </div>
+                    <div class="math-card yellow">
+                        <div class="math-header text-yellow-glow">DH3</div>
+                        <div class="flex flex-col gap-1.5 w-full">
+                            <span class="key-pill pill-eph" title="My Ephemeral Private Key">⚡ Priv Eph <span class="ml-auto opacity-50">${initPrivEph}</span></span>
+                            <span class="op-plus mx-auto">+</span>
+                            <span class="key-pill pill-pub" title="Their Public One-Time Key">🌍 Pub OTK <span class="ml-auto opacity-50">${respPubOTK}</span></span>
+                        </div>
+                    </div>
+                `;
+
+                // Dynamic Footer for Initiator
+                footerEl.innerHTML = `<div class="inline-block px-3 py-1 bg-slate-800 rounded-full border border-slate-700 text-[10px] text-slate-300 font-mono">Root Key = KDF(DH1 || DH2 || DH3)</div>`;
+
+                // Middle Viz
+                const entry = document.createElement('div');
+                entry.className = "dh-step active";
+                entry.innerHTML = `
+                    <div class="font-bold text-yellow-400 mb-1">STEP 2: ${initName} Calculates Secrets</div>
+                    <div class="text-[9px] text-slate-400">Combining Private Keys with ${respName}'s Public Keys...</div>
+                `;
+                visualizer.appendChild(entry);
+                visualizer.scrollTop = visualizer.scrollHeight;
+
+                phaseLabel.innerText = "Phase: Math Ops";
+                phaseLabel.classList.replace('text-blue-400', 'text-yellow-400');
+                
+                btn.innerHTML = `<span>3. Derive Root Key</span> <i class="fas fa-key"></i>`;
+                
+            } else if (x3dhStep === 2) {
+                // STEP 3: DERIVE
+                x3dhStep = 3;
+                visualizer.lastElementChild.classList.remove('active');
+
+                pendingSharedSecret = generateHex(64).toUpperCase();
+                
+                Clients[initiator].rootKey = pendingSharedSecret;
+                Clients[initiator].chainKey = kdf(pendingSharedSecret);
+                
+                updateRatchetUI(initiator, Clients[initiator].rootKey, Clients[initiator].chainKey, "Ready");
+                
+                const entry = document.createElement('div');
+                entry.className = "dh-step active";
+                entry.style.borderLeftColor = "#f59e0b";
+                entry.innerHTML = `
+                    <div class="font-bold text-white mb-1">STEP 3: ${initName} derives Root Key</div>
+                    <div class="mt-2 bg-emerald-900/30 p-2 rounded border border-emerald-500/30 text-center shadow-lg">
+                        <div class="text-[9px] text-emerald-400 uppercase tracking-widest mb-1">Shared Root Key</div>
+                        <div class="font-mono font-bold text-white text-[10px] break-all tracking-wider">${pendingSharedSecret.substr(0,24)}...</div>
+                    </div>
+                `;
+                visualizer.appendChild(entry);
+                visualizer.scrollTop = visualizer.scrollHeight;
+
+                phaseLabel.innerText = `Phase: ${initName} Ready`;
+                phaseLabel.classList.replace('text-yellow-400', 'text-emerald-400');
+                phaseLabel.classList.add('font-bold', 'bg-emerald-900');
+                
+                btn.innerHTML = `<span>Handshake Complete</span> <i class="fas fa-check-circle"></i>`;
+                btn.disabled = true;
+                btn.classList.add('bg-slate-800', 'text-slate-500', 'border-slate-700');
+                btn.classList.remove('bg-emerald-700', 'border-emerald-600/50');
+
+                log(`<b>Handshake Done</b>. ${initName} knows secret. ${respName} is still offline/unaware.`, 'success');
+                log(`${initName} must send <b>First Message</b> with headers to establish session.`, 'warn');
+                
+                const inputId = `${initiator}-input`;
+                const sendId = `${initiator}-send`;
+                
+                const inputEl = document.getElementById(inputId);
+                inputEl.disabled = false;
+                document.getElementById(sendId).disabled = false;
+                inputEl.focus();
+                inputEl.placeholder = "Chat Unlocked. Type here...";
+                inputEl.classList.add('ring-2', 'ring-emerald-500/50', 'bg-slate-800');
+            }
+        }
+
+        function updateRatchetUI(user, root, chain, msg) {
+            document.getElementById(`${user}-root-key`).innerText = root.substr(0,8)+"...";
+            document.getElementById(`${user}-chain-key`).innerText = chain.substr(0,8)+"...";
+            
+            const msgEl = document.getElementById(`${user}-msg-key`);
+            msgEl.innerText = msg;
+            msgEl.classList.remove('wiped-key', 'text-emerald-400', 'text-slate-600', 'italic');
+            
+            if(msg === "Ready" || msg === "Expired" || msg === "Inactive") {
+                msgEl.classList.add('text-slate-600', 'italic');
+            } else {
+                msgEl.classList.add('text-emerald-400', 'font-bold');
+            }
+        }
+
+        function resetX3DH() {
+            x3dhStep = 0;
+            pendingSharedSecret = null;
+            document.getElementById('x3dh-visualizer').innerHTML = '<div class="flex flex-col items-center justify-center h-full text-slate-600 gap-2"><i class="fas fa-key text-xl opacity-20"></i><span>1. Generate Keys (Vaults)</span><span>2. Start Handshake (Here)</span></div>';
+            document.getElementById('lab-phase').innerText = 'Phase: Inactive';
+            document.getElementById('lab-phase').className = 'bg-slate-800 px-2 py-0.5 rounded text-slate-400 border border-slate-700';
+            
+            Clients.alice.rootKey = null; Clients.alice.chainKey = null;
+            Clients.bob.rootKey = null; Clients.bob.chainKey = null;
+            
+            updateRatchetUI('alice', '...', '...', 'Inactive');
+            updateRatchetUI('bob', '...', '...', 'Inactive');
+            
+            document.getElementById('alice-x3dh-math').classList.add('hidden');
+            document.getElementById('bob-x3dh-math').classList.add('hidden');
+
+            if(DB.users.alice && DB.users.bob) {
+                const btn = document.getElementById('btn-x3dh-step');
+                btn.disabled = false;
+                btn.classList.remove('bg-slate-800', 'text-slate-500', 'border-slate-700');
+                btn.classList.add('bg-emerald-700', 'border-emerald-600/50');
+                updateInitiatorUI();
+            }
+
+            document.getElementById('alice-input').disabled = true;
+            document.getElementById('alice-send').disabled = true;
+            document.getElementById('alice-input').placeholder = "Handshake required...";
+            document.getElementById('alice-input').classList.remove('ring-2', 'ring-emerald-500/50', 'bg-slate-800');
+
+            document.getElementById('bob-input').disabled = true;
+            document.getElementById('bob-send').disabled = true;
+            document.getElementById('bob-input').placeholder = "Handshake required...";
+            document.getElementById('bob-input').classList.remove('ring-2', 'ring-emerald-500/50', 'bg-slate-800');
+        }
+
+        // --- STEP 3: MESSAGING ---
+        function sendMessage(sender) {
+            const inputId = `${sender}-input`;
+            const input = document.getElementById(inputId);
+            const plaintext = input.value;
+            if (!plaintext) return;
+
+            const receiver = sender === 'alice' ? 'bob' : 'alice';
+            const isInitialMessage = (Clients[receiver].rootKey === null);
+            
+            const oldChain = Clients[sender].chainKey;
+            const newMsgKey = `MK_${generateHex(4)}`;
+            const newChain = kdf(oldChain);
+            Clients[sender].chainKey = newChain;
+
+            updateRatchetUI(sender, Clients[sender].rootKey, newChain, newMsgKey);
+            
+            const messageID = Math.floor(Math.random() * 10000);
+
+            addChatBubble(sender, plaintext, 'sent');
+            input.value = '';
+
+            setTimeout(() => {
+                const msgEl = document.getElementById(`${sender}-msg-key`);
+                msgEl.classList.add('wiped-key');
+            }, 800);
+
+            setTimeout(() => {
+                let packetHTML = `
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="font-bold text-slate-400 text-[9px]">MSG #${messageID}</span>
+                        <span class="text-[9px] bg-slate-800 px-1 rounded text-slate-500">→ ${receiver.toUpperCase()}</span>
+                    </div>
+                    <div class="text-[9px] font-mono text-red-400 bg-red-950/20 p-1 rounded border border-red-900/30 flex items-center gap-1">
+                        <i class="fas fa-lock"></i> ENCRYPTED PAYLOAD
+                    </div>
+                `;
+
+                if (isInitialMessage) {
+                    log(`<b>${sender.toUpperCase()} attaches X3DH Header</b> (EK + IDs) to Packet #${messageID}.`, 'warn');
+                    // Use Saved OTK ID
+                    const otkId = Clients[sender].peerOTKId;
+                    
+                    packetHTML += `<div class="mt-1 text-[8px] bg-blue-900/20 p-1.5 rounded border border-blue-800/40 text-blue-300">
+                        <div class="font-bold mb-0.5 flex items-center gap-1"><i class="fas fa-paperclip"></i> X3DH HEADER</div>
+                        <div class="font-mono opacity-80">Eph: ${Clients[sender].ephPub.substr(0,8)}...</div>
+                        <div class="font-mono opacity-80">OTK ID: <span class="text-emerald-300 font-bold">${otkId}</span></div>
+                    </div>`;
+                } else {
+                    log(`Packet <code>#${messageID}</code> uploaded to Cloud.`, 'info');
+                }
+
+                const queue = document.getElementById('server-messages-container');
+                const msgEl = document.createElement('div');
+                msgEl.className = "bg-slate-800 p-2 rounded border border-slate-700 relative overflow-hidden fade-in shadow-sm";
+                msgEl.innerHTML = packetHTML;
+                queue.appendChild(msgEl);
+                queue.scrollTop = queue.scrollHeight;
+
+                setTimeout(() => {
+                    log(`<b>${receiver.toUpperCase()}</b> pulls #${messageID}...`, 'info');
+                    
+                    if (isInitialMessage) {
+                        log(`<b>${receiver.toUpperCase()} found X3DH Header!</b>`, 'warn');
+                        log(`${receiver.toUpperCase()} uses ${sender.toUpperCase()}'s Ephemeral Key + His Private Key to derive Secret.`, 'warn');
+                        
+                        // --- SHOW RECEIVER MATH ---
+                        const mathEl = document.getElementById(`${receiver}-x3dh-math`);
+                        const contentEl = document.getElementById(`${receiver}-math-content`);
+                        const titleEl = document.getElementById(`${receiver}-math-title`);
+                        const footerEl = document.getElementById(`${receiver}-math-footer`);
+                        const senderName = sender.charAt(0).toUpperCase() + sender.slice(1);
+                        mathEl.classList.remove('hidden');
+                        mathEl.classList.add('block', 'fade-in');
+                        
+                        // Dynamic Header for Receiver
+                        titleEl.className = "font-bold text-emerald-500 text-[10px] tracking-wide";
+                        titleEl.innerHTML = '<i class="fas fa-check-double mr-1"></i> RECEIVER CALCULATION (RECOVERY)';
+
+                        // Grab real keys
+                        const recvPrivSPK = Clients[receiver].vault.signedPreKey.privateKey.substr(0,4)+"..";
+                        const sendPubIK = DB.users[sender].identityKey.substr(0,4)+"..";
+                        
+                        const recvPrivIK = Clients[receiver].vault.identityKey.privateKey.substr(0,4)+"..";
+                        const sendPubEph = Clients[sender].ephPub.substr(0,4)+"..";
+                        
+                        const recvPrivOTK = Clients[receiver].vault.oneTimeKey.privateKey.substr(0,4)+"..";
+
+                        contentEl.innerHTML = `
+                            <div class="math-card emerald">
+                                <div class="math-header text-emerald-glow">DH1</div>
+                                <div class="flex flex-col gap-1.5 w-full">
+                                    <span class="key-pill pill-priv" title="My Private SignedPreKey">🔑 Priv SPK <span class="ml-auto opacity-50">${recvPrivSPK}</span></span>
+                                    <span class="op-plus mx-auto">+</span>
+                                    <span class="key-pill pill-pub" title="Sender Public Identity">🌍 Pub IK <span class="ml-auto opacity-50">${sendPubIK}</span></span>
+                                </div>
+                            </div>
+                            <div class="math-card blue">
+                                <div class="math-header text-blue-glow">DH2</div>
+                                <div class="flex flex-col gap-1.5 w-full">
+                                    <span class="key-pill pill-priv" title="My Private Identity">🔑 Priv IK <span class="ml-auto opacity-50">${recvPrivIK}</span></span>
+                                    <span class="op-plus mx-auto">+</span>
+                                    <span class="key-pill pill-pub" title="Sender Public Ephemeral">🌍 Pub Eph <span class="ml-auto opacity-50">${sendPubEph}</span></span>
+                                </div>
+                            </div>
+                            <div class="math-card yellow">
+                                <div class="math-header text-yellow-glow">DH3</div>
+                                <div class="flex flex-col gap-1.5 w-full">
+                                    <span class="key-pill pill-priv" title="My Private OneTimeKey">🔑 Priv OTK <span class="ml-auto opacity-50">${recvPrivOTK}</span></span>
+                                    <span class="op-plus mx-auto">+</span>
+                                    <span class="key-pill pill-pub" title="Sender Public Ephemeral">🌍 Pub Eph <span class="ml-auto opacity-50">${sendPubEph}</span></span>
+                                </div>
+                            </div>
+                        `;
+
+                        // Dynamic Footer for Receiver
+                        footerEl.innerHTML = `<div class="inline-block px-3 py-1 bg-emerald-900/20 rounded-full border border-emerald-800/50 text-[10px] text-emerald-400 font-bold tracking-wide"><i class="fas fa-link mr-1"></i> KEYS MATCHED</div>`;
+
+                        Clients[receiver].rootKey = pendingSharedSecret;
+                        Clients[receiver].chainKey = kdf(pendingSharedSecret);
+                        updateRatchetUI(receiver, Clients[receiver].rootKey, Clients[receiver].chainKey, "Init...");
+                        
+                        const recvInputId = `${receiver}-input`;
+                        const recvSendId = `${receiver}-send`;
+                        document.getElementById(recvInputId).disabled = false;
+                        document.getElementById(recvSendId).disabled = false;
+                        document.getElementById(recvInputId).placeholder = "Chat Unlocked. Type here...";
+                        document.getElementById(recvInputId).classList.add('ring-2', 'ring-emerald-500/50', 'bg-slate-800');
+                    }
+
+                    setTimeout(() => {
+                        Clients[receiver].chainKey = kdf(Clients[receiver].chainKey);
+                        updateRatchetUI(receiver, Clients[receiver].rootKey, Clients[receiver].chainKey, "Wiped");
+                        addChatBubble(receiver, plaintext, 'received');
+                        msgEl.classList.add('opacity-40', 'grayscale');
+                        msgEl.querySelector('.text-red-400').innerHTML = `<span class="text-green-400 flex items-center gap-1"><i class="fas fa-check-double"></i> DELIVERED</span>`;
+                        msgEl.querySelector('.text-red-400').className = "text-[9px] font-mono text-green-400 bg-green-950/20 p-1 rounded border border-green-900/30 flex items-center gap-1";
+                    }, 800);
+
+                }, 1500);
+
+            }, 1000);
+        }
+
+        function addChatBubble(user, text, type) {
+            const windowId = `${user}-chat-window`;
+            const win = document.getElementById(windowId);
+            if(win.children[0] && win.children[0].classList.contains('text-center')) win.innerHTML = '';
+
+            const bubble = document.createElement('div');
+            const align = type === 'sent' ? 'self-end bg-indigo-600 text-white rounded-br-none shadow-md shadow-indigo-900/20' : 'self-start bg-slate-700 text-slate-100 rounded-bl-none shadow-md shadow-black/20';
+            bubble.className = `max-w-[85%] px-3 py-2 rounded-2xl text-xs mb-2 ${align} break-words fade-in border border-white/5`;
+            bubble.innerText = text;
+            win.appendChild(bubble);
+            win.scrollTop = win.scrollHeight;
+        }
+
+        log("Simulator Initialized.", 'info');
+    </script>
+</body>
+</html>
